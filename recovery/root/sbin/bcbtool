@@ -1,0 +1,145 @@
+#!/sbin/sh
+
+MISC_DEV="/dev/block/platform/mtk-msdc.0/by-name/misc"
+BCB_OFFSET=352
+TEMP_FILE="/tmp/bcb_block"
+
+get_current_slot() {
+    dd if="$MISC_DEV" of="$TEMP_FILE" bs=512 skip=1 count=1 2>/dev/null
+    
+    slot0_octal=$(dd if="$TEMP_FILE" bs=1 skip=357 count=1 2>/dev/null | od -b | head -1 | awk '{print $2}')
+    slot1_octal=$(dd if="$TEMP_FILE" bs=1 skip=358 count=1 2>/dev/null | od -b | head -1 | awk '{print $2}')
+    
+    if [ -z "$slot0_octal" ]; then
+        slot0_byte=0
+    else
+        slot0_byte=$(printf "%d" "0$slot0_octal" 2>/dev/null || echo 0)
+    fi
+    
+    if [ -z "$slot1_octal" ]; then
+        slot1_byte=0
+    else
+        slot1_byte=$(printf "%d" "0$slot1_octal" 2>/dev/null || echo 0)
+    fi
+    
+    slot0_priority=$((slot0_byte & 15))
+    slot1_priority=$((slot1_byte & 15))
+    
+    if [ "$slot0_priority" -gt "$slot1_priority" ]; then
+        echo "0"
+    else
+        echo "1"
+    fi
+    
+    rm -f "$TEMP_FILE"
+}
+
+get_boot_slot() {
+    getprop ro.boot.slot_suffix | sed 's/_//'
+}
+
+normalize_slot() {
+    case "$1" in
+        "0"|"a"|"A")
+            echo "0"
+            ;;
+        "1"|"b"|"B")
+            echo "1"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+update_symlinks() {
+    slot=$1
+    
+    if [ "$slot" = "0" ]; then
+        slot_suffix="_a"
+    else
+        slot_suffix="_b"
+    fi
+    
+    rm -f /dev/block/other-system /dev/block/other-boot
+    ln -s /dev/block/platform/mtk-msdc.0/by-name/system${slot_suffix} /dev/block/other-system
+    ln -s /dev/block/platform/mtk-msdc.0/by-name/boot${slot_suffix} /dev/block/other-boot
+}
+
+set_active_slot() {
+    slot=$(normalize_slot "$1")
+    current_boot_slot=$(get_boot_slot)
+    
+    dd if="$MISC_DEV" of="$TEMP_FILE" bs=512 skip=1 count=1 2>/dev/null
+    
+    if [ "$slot" = "0" ]; then
+        printf '\x8f' | dd of="$TEMP_FILE" bs=1 seek=357 count=1 conv=notrunc 2>/dev/null
+        printf '\x00' | dd of="$TEMP_FILE" bs=1 seek=358 count=1 conv=notrunc 2>/dev/null
+        target_suffix="_a"
+        slot_name="A"
+    else
+        printf '\x00' | dd of="$TEMP_FILE" bs=1 seek=357 count=1 conv=notrunc 2>/dev/null
+        printf '\x8f' | dd of="$TEMP_FILE" bs=1 seek=358 count=1 conv=notrunc 2>/dev/null
+        target_suffix="_b"
+        slot_name="B"
+    fi
+    
+    dd if="$TEMP_FILE" of="$MISC_DEV" bs=512 seek=1 count=1 2>/dev/null
+    rm -f "$TEMP_FILE"
+    
+    if [ "$current_boot_slot" != "$slot" ]; then
+        resetprop ro.boot.slot_suffix "$target_suffix"
+        echo "Updated ro.boot.slot_suffix to $target_suffix"
+    fi
+    
+    update_symlinks "$slot"
+    echo "Slot $slot_name set as active"
+    echo "Symlinks updated for slot $target_suffix"
+}
+
+reset_bcb() {
+    dd if="$MISC_DEV" of="$TEMP_FILE" bs=512 skip=1 count=1 2>/dev/null
+    
+    printf '\x00\x41\x42\x42\x01\x8f\x00' | dd of="$TEMP_FILE" bs=1 seek=352 count=7 conv=notrunc 2>/dev/null
+    
+    dd if="$TEMP_FILE" of="$MISC_DEV" bs=512 seek=1 count=1 2>/dev/null
+    rm -f "$TEMP_FILE"
+}
+
+case "$1" in
+    "get")
+        bcb_slot=$(get_current_slot)
+        boot_slot=$(get_boot_slot)
+        boot_slot_normalized=$(normalize_slot "$boot_slot")
+        
+        if [ "$bcb_slot" = "0" ]; then
+            bcb_letter="A"
+        else
+            bcb_letter="B"
+        fi
+        echo "BCB slot: $bcb_slot ($bcb_letter)"
+        echo "Boot slot: $boot_slot"
+        if [ "$bcb_slot" = "$boot_slot_normalized" ]; then
+            echo "Slots match"
+        else
+            echo "Slots do not match"
+        fi
+        ;;
+    "set")
+        normalized_slot=$(normalize_slot "$2")
+        if [ -n "$normalized_slot" ]; then
+            set_active_slot "$2"
+        else
+            echo "Usage: $0 set [0|1|a|b]"
+            exit 1
+        fi
+        ;;
+    "reset")
+        reset_bcb
+        echo "BCB reset to default (slot A active)"
+        ;;
+    *)
+        echo "Usage: $0 {get|set [0|1|a|b]|reset}"
+        exit 1
+        ;;
+esac
