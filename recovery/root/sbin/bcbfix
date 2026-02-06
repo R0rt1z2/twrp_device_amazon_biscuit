@@ -1,0 +1,44 @@
+#!/sbin/sh
+
+get_boot_slot() {
+    getprop ro.boot.slot_suffix | sed 's/_//'
+}
+
+# Running bcbtool dump lets us see if the header is broken.
+/sbin/amzn_bcbtool dump > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    # Re-initialize BCB with the priority slot being the one
+    # we're booted from (this condition should never trigger).
+    /sbin/bcbtool init $(get_boot_slot)
+    exit 0
+fi
+
+# Check if there is any active slot
+active_slot=$(/sbin/amzn_bcbtool get_active)
+if [ $? -ne 0 ]; then
+    # Set the active slot of the BCB to the one we're booted from.
+    # set_active will set success on the requested slot and disable
+    # the other one entirely. This will break the fallback mechanism
+    # but that really doesn't matter since hacked fastboot is always
+    # accessible on both slots.
+    echo "No active slot! Setting active slot to currently booted one."
+    /sbin/bcbtool set_active "$(get_boot_slot)"
+    exit 0
+else
+    echo "bcbtool reports active slot: ${active_slot}"
+fi
+
+# Preloader bug: If neither slot sets success and the one with the
+# highest priority runs out of tries, we will brick. Make sure
+# there is always one slot that has success=1
+slot_a_success=$(/sbin/amzn_bcbtool get a success)
+slot_b_success=$(/sbin/amzn_bcbtool get b success)
+if [ "$slot_a_success" = "0" ] && [ "$slot_b_success" = "0" ]; then
+    # Set the active slot of the BCB to the one we're booted from.
+    # set_active will set success on the requested slot and disable
+    # the other one entirely. This will break the fallback mechanism
+    # but that really doesn't matter since hacked fastboot is always
+    # accessible on both slots.
+    echo "Preventing potential brick by ensuring at least one slot is successful."
+    /sbin/bcbtool set_active "$(get_boot_slot)"
+fi
