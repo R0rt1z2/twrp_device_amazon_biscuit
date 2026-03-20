@@ -5,8 +5,9 @@ PATH=/sbin:/system/sbin:/system/bin:/system/xbin
 CURRENT_SLOT=`getprop ro.boot.slot_suffix 2>/dev/null`
 
 REAL_BOOT_A=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/boot_a_x`
-REAL_BOOT_B=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/boot_a_b`
+REAL_BOOT_B=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/boot_b_x`
 AMONET_BOOT_A=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/boot_a`
+AMONET_BOOT_B=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/boot_b`
 REAL_LK_A=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/lk_a`
 REAL_LK_B=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/lk_b`
 REAL_TEE1=`readlink -f /dev/block/platform/mtk-msdc.0/by-name/tee1`
